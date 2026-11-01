@@ -52,6 +52,10 @@ class ThreatReportGenerator:
         if not isinstance(self.data, dict):
             logging.error("Data must be a dictionary.")
             return False
+        # That is the whole validation: any dictionary passes. A
+        # component without a name key passes here and then raises
+        # KeyError halfway through report generation, where nothing
+        # catches it, so main ends in a traceback with no report.
 
         # Add more data validation checks as needed based on the expected data structure
         # e.g., check for required keys, data types, etc.
@@ -163,6 +167,9 @@ class ThreatReportGenerator:
             self.report_content = self.generate_markdown_report()
             file_extension = ".md"
         elif self.output_format == "pdf":
+            # The CLI accepts pdf as a format choice, so the failure
+            # only shows up here, after the run started: a message, no
+            # file, and a normal return, so the process still exits 0.
             # Implement PDF generation using a library like WeasyPrint or ReportLab
             logging.error("PDF generation is not implemented yet.")
             print("PDF generation is not implemented yet.")
@@ -277,6 +284,10 @@ def main() -> None:
 if __name__ == "__main__":
     # Example usage (for testing purposes):
     # Create a dummy JSON file
+    # This runs before main on every direct launch: a first run in a
+    # directory drops an example_data.json into it whether the user
+    # wanted one or not, and later runs leave that file alone even if
+    # it is stale or hand edited.
     if not os.path.exists("example_data.json"):
         example_data = {
             "system_name": "Example System",
