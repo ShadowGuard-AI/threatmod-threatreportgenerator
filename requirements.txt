@@ -1,1 +1,2 @@
 networkx>=3.2
+# Optional, for graph rendering: graphviz

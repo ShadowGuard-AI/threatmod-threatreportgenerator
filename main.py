@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import logging
 import os
@@ -19,6 +20,21 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
+def escape_value(value) -> str:
+    """Render an input value as inert text in the generated report.
+
+    HTML is escaped and Markdown control characters are backslash
+    escaped, and newlines are collapsed, so markup, headings, table
+    breaks, and link syntax in input data cannot become live markup
+    or structure in the report.
+    """
+    text = html.escape(str(value), quote=True)
+    text = text.replace("\r", " ").replace("\n", " ")
+    for ch in "\\`*_{}[]()#+-.!|>":
+        text = text.replace(ch, "\\" + ch)
+    return text
+
+
 class ThreatReportGenerator:
     """
     Generates threat model reports from structured threat data.
@@ -30,7 +46,7 @@ class ThreatReportGenerator:
 
         Args:
             data: The threat data as a dictionary.
-            output_format: The format of the report (markdown or pdf).
+            output_format: The format of the report (markdown).
             output_file: The name of the output file (without extension).
             diagram: Flag to include diagram generation.
         """
@@ -52,14 +68,13 @@ class ThreatReportGenerator:
         if not isinstance(self.data, dict):
             logging.error("Data must be a dictionary.")
             return False
-        # That is the whole validation: any dictionary passes. A
-        # component without a name key passes here and then raises
-        # KeyError halfway through report generation, where nothing
-        # catches it, so main ends in a traceback with no report.
-
-        # Add more data validation checks as needed based on the expected data structure
-        # e.g., check for required keys, data types, etc.
-
+        if not self.data:
+            logging.error("Data is empty: no threat data to report.")
+            return False
+        sections = [self.data.get(k) for k in ("components", "data_flows", "threats")]
+        if not any(isinstance(sec, list) and sec for sec in sections):
+            logging.error("Data contains no components, data flows, or threats: nothing to report.")
+            return False
         return True
         
 
@@ -107,7 +122,7 @@ class ThreatReportGenerator:
          else:
             text_representation = "Text-based Graph Representation:\n"
             for u, v, data in self.graph.edges(data=True):
-                text_representation += f"{u} -> {v} ({data.get('label', '')})\n"
+                text_representation += f"{escape_value(u)} -> {escape_value(v)} ({escape_value(data.get('label', ''))})\n"
             return text_representation
 
 
@@ -122,32 +137,32 @@ class ThreatReportGenerator:
             return "Error: Invalid threat data."
 
         report = f"# Threat Model Report\n\n"
-        report += f"**System:** {self.data.get('system_name', 'N/A')}\n\n"
-        report += f"**Date Generated:** {self.data.get('date_generated', 'N/A')}\n\n"
+        report += f"**System:** {escape_value(self.data.get('system_name', 'N/A'))}\n\n"
+        report += f"**Date Generated:** {escape_value(self.data.get('date_generated', 'N/A'))}\n\n"
 
         if "components" in self.data:
             report += "## Components\n\n"
             for component in self.data["components"]:
-                report += f"### {component['name']}\n"
-                report += f"- **Description:** {component.get('description', 'N/A')}\n"
-                report += f"- **Type:** {component.get('type', 'N/A')}\n\n"
+                report += f"### {escape_value(component['name'])}\n"
+                report += f"- **Description:** {escape_value(component.get('description', 'N/A'))}\n"
+                report += f"- **Type:** {escape_value(component.get('type', 'N/A'))}\n\n"
 
         if "data_flows" in self.data:
             report += "## Data Flows\n\n"
             report += "| Source | Destination | Description |\n"
             report += "|---|---|---|\n"
             for flow in self.data["data_flows"]:
-                report += f"| {flow['source']} | {flow['destination']} | {flow['description']} |\n"
+                report += f"| {escape_value(flow['source'])} | {escape_value(flow['destination'])} | {escape_value(flow['description'])} |\n"
             report += "\n"
 
         if "threats" in self.data:
             report += "## Threats\n\n"
             for threat in self.data["threats"]:
-                report += f"### {threat['name']}\n"
-                report += f"- **Description:** {threat.get('description', 'N/A')}\n"
-                report += f"- **Likelihood:** {threat.get('likelihood', 'N/A')}\n"
-                report += f"- **Impact:** {threat.get('impact', 'N/A')}\n"
-                report += f"- **Mitigation:** {threat.get('mitigation', 'N/A')}\n\n"
+                report += f"### {escape_value(threat['name'])}\n"
+                report += f"- **Description:** {escape_value(threat.get('description', 'N/A'))}\n"
+                report += f"- **Likelihood:** {escape_value(threat.get('likelihood', 'N/A'))}\n"
+                report += f"- **Impact:** {escape_value(threat.get('impact', 'N/A'))}\n"
+                report += f"- **Mitigation:** {escape_value(threat.get('mitigation', 'N/A'))}\n\n"
 
         if self.include_diagram:
              self.generate_graph()
@@ -158,36 +173,37 @@ class ThreatReportGenerator:
         return report
 
 
-    def generate_report(self) -> None:
+    def generate_report(self) -> bool:
         """
         Generates the report based on the specified format.
-        """
 
+        Returns True only when a report file was written.
+        """
+        if not self._validate_data():
+            logging.error("Invalid or empty threat data: no report generated.")
+            print("Error: Invalid or empty threat data: no report generated.")
+            return False
         if self.output_format == "markdown":
             self.report_content = self.generate_markdown_report()
+            if self.report_content.startswith("Error:"):
+                return False
             file_extension = ".md"
-        elif self.output_format == "pdf":
-            # The CLI accepts pdf as a format choice, so the failure
-            # only shows up here, after the run started: a message, no
-            # file, and a normal return, so the process still exits 0.
-            # Implement PDF generation using a library like WeasyPrint or ReportLab
-            logging.error("PDF generation is not implemented yet.")
-            print("PDF generation is not implemented yet.")
-            return
         else:
             logging.error(f"Unsupported output format: {self.output_format}")
             print(f"Unsupported output format: {self.output_format}")
-            return
+            return False
         
         try:
             with open(self.output_file + file_extension, "w") as f:
                 f.write(self.report_content)
             logging.info(f"Report generated successfully: {self.output_file + file_extension}")
             print(f"Report generated successfully: {self.output_file + file_extension}")
+            return True
 
         except Exception as e:
             logging.error(f"Error writing report to file: {e}")
             print(f"Error writing report to file: {e}")
+            return False
 
 
 def setup_argparse() -> argparse.ArgumentParser:
@@ -201,7 +217,7 @@ def setup_argparse() -> argparse.ArgumentParser:
         description="Generates threat model reports from structured threat data."
     )
     parser.add_argument(
-        "-i", "--input", required=True, help="Path to the input data file (JSON or YAML)"
+        "-i", "--input", required=False, help="Path to the input data file (JSON only)"
     )
     parser.add_argument(
         "-o",
@@ -213,8 +229,8 @@ def setup_argparse() -> argparse.ArgumentParser:
         "-f",
         "--format",
         default="markdown",
-        choices=["markdown", "pdf"],
-        help="Format of the report (markdown or pdf)",
+        choices=["markdown"],
+        help="Format of the report (markdown)",
     )
     parser.add_argument(
         "-d",
@@ -228,13 +244,18 @@ def setup_argparse() -> argparse.ArgumentParser:
         action="store_false",
         help="Exclude a diagram in the report",
     )
+    parser.add_argument(
+        "--example",
+        action="store_true",
+        help="Write an example_data.json file in the working directory and exit.",
+    )
     parser.set_defaults(diagram=True) # Diagram generation default is true
     return parser
 
 
 def load_data(input_file: str) -> Dict[str, Any]:
     """
-    Loads data from a JSON or YAML file.
+    Loads data from a JSON file.
 
     Args:
         input_file: The path to the input file.
@@ -273,48 +294,48 @@ def main() -> None:
     parser = setup_argparse()
     args = parser.parse_args()
 
+    if args.example:
+        write_example_data()
+        print("Example data written to example_data.json")
+        return
+
+    if not args.input:
+        parser.error("-i/--input is required unless --example is used")
+
     data = load_data(args.input)
 
     report_generator = ThreatReportGenerator(
         data, args.format, args.output, args.diagram
     )
-    report_generator.generate_report()
+    if not report_generator.generate_report():
+        sys.exit(1)
+
+
+def write_example_data(path: str = "example_data.json") -> None:
+    """Write a small example input file. Only called for --example."""
+    example_data = {
+        "system_name": "Example System",
+        "date_generated": "2023-11-15",
+        "components": [
+            {"name": "Web Server", "description": "Handles HTTP requests", "type": "Server"},
+            {"name": "Database", "description": "Stores application data", "type": "Database"},
+        ],
+        "data_flows": [
+            {"source": "Web Server", "destination": "Database", "description": "Queries for user data"},
+        ],
+        "threats": [
+            {
+                "name": "SQL Injection",
+                "description": "Attacker injects malicious SQL code",
+                "likelihood": "High",
+                "impact": "Critical",
+                "mitigation": "Use parameterized queries",
+            }
+        ],
+    }
+    with open(path, "w") as f:
+        json.dump(example_data, f, indent=4)
 
 
 if __name__ == "__main__":
-    # Example usage (for testing purposes):
-    # Create a dummy JSON file
-    # This runs before main on every direct launch: a first run in a
-    # directory drops an example_data.json into it whether the user
-    # wanted one or not, and later runs leave that file alone even if
-    # it is stale or hand edited.
-    if not os.path.exists("example_data.json"):
-        example_data = {
-            "system_name": "Example System",
-            "date_generated": "2023-11-15",
-            "components": [
-                {"name": "Web Server", "description": "Handles HTTP requests", "type": "Server"},
-                {"name": "Database", "description": "Stores application data", "type": "Database"},
-            ],
-            "data_flows": [
-                {"source": "Web Server", "destination": "Database", "description": "Queries for user data"},
-            ],
-            "threats": [
-                {
-                    "name": "SQL Injection",
-                    "description": "Attacker injects malicious SQL code",
-                    "likelihood": "High",
-                    "impact": "Critical",
-                    "mitigation": "Use parameterized queries",
-                }
-            ],
-        }
-        with open("example_data.json", "w") as f:
-            json.dump(example_data, f, indent=4)
-
-    # To run, execute:
-    # python main.py -i example_data.json -o my_threat_report -f markdown
-    # or
-    # python main.py -i example_data.json -o my_threat_report -f markdown --no-diagram
-
     main()
