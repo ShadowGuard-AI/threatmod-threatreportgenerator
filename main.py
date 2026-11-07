@@ -75,6 +75,29 @@ class ThreatReportGenerator:
         if not any(isinstance(sec, list) and sec for sec in sections):
             logging.error("Data contains no components, data flows, or threats: nothing to report.")
             return False
+        # Entries missing the keys the report builder reads directly
+        # (component and threat names, flow source, destination, and
+        # description) are malformed input, not a crash: reject the
+        # data cleanly here instead of dying with a KeyError later.
+        required_keys = {
+            "components": ("name",),
+            "data_flows": ("source", "destination", "description"),
+            "threats": ("name",),
+        }
+        for section, keys in required_keys.items():
+            entries = self.data.get(section)
+            if entries is None:
+                continue
+            if not isinstance(entries, list):
+                logging.error(f"Section {section} must be a list.")
+                return False
+            for entry in entries:
+                if not isinstance(entry, dict) or any(k not in entry for k in keys):
+                    logging.error(
+                        f"Malformed entry in {section}: each entry must define "
+                        + ", ".join(keys) + "."
+                    )
+                    return False
         return True
         
 
